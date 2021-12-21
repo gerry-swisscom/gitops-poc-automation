@@ -1,0 +1,47 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: <cluster-name>
+  region: eu-central-1
+vpc:
+  subnets:
+    public:
+      eu-central-1a: { id: subnet-09321c9d93ed6f285 }
+      eu-central-1b: { id: subnet-0c05cf19e1a01fd06 }
+      eu-central-1c: { id: subnet-0c744de5e05a54697 }
+gitops:
+  flux:
+    gitProvider: "github"
+    flags:
+      owner: "<your GitHub Username>"
+      repository: "<cluster-name>"
+      private: "false"
+      personal: "true"
+      branch: "main"
+      namespace: "flux-system"
+      path: "clusters"
+      read-write-key: "true"
+nodeGroups:
+  - name: <cluster-name>-ng
+    labels: { role: workers }
+    instanceType: m5.large
+    desiredCapacity: 3
+    volumeSize: 80
+    iam:
+      withAddonPolicies:
+        imageBuilder: true
+        autoScaler: true
+        externalDNS: true
+        certManager: true
+        appMesh: true
+        appMeshPreview: true
+        ebs: true
+        fsx: true
+        efs: true
+        albIngress: true
+        xRay: true
+        cloudWatch: true
+secretsEncryption:
+  # KMS key used for envelope encryption of Kubernetes secrets
+  keyARN: <key-arn>
