@@ -79,10 +79,6 @@ class Context:
         
 pass_ctx = click.make_pass_decorator(Context)
 
-def echo_home(ctx):
-    click.echo(f"context home is: {ctx.obj.home}")
-    click.echo(f"verbose: {ctx.obj.verbose}")
-    click.echo(f"config: {ctx.obj.config}")
 
 @click.group()
 @click.option(
@@ -286,14 +282,6 @@ def status(ctx):
         with open(ctx.path_to_create_cluster_yaml) as f:
             click.echo(f.read())
     
-
-@cli.command()
-@click.option('--count', default=1, help='number of greetings')
-@click.option('--name', default="friend", prompt="please enter your name")
-@pass_ctx
-def hello(ctx, count, name):
-    for x in range(count):
-        click.echo(f"Hello {name}!")
     
         
 
