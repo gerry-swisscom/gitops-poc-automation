@@ -5,7 +5,7 @@ setup(
     version='0.1.0',
     py_modules=['create_cluster'],
     install_requires=[
-        'Click',
+        'Click', 'boto3', 'pyyaml'
     ],
     entry_points={
         'console_scripts': [

@@ -1,1 +1,1 @@
-pip install --editable .
+pip3 install --editable .
