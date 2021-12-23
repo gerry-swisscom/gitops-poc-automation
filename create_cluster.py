@@ -45,6 +45,14 @@ class Context:
         self.permissions_dir = os.path.join(self.home, "permissions")
         self.path_to_aws_auth_yaml = os.path.join(self.permissions_dir, "aws-auth.yaml")
         self.alb_controller_dir = os.path.join(self.home, "alb_controller")
+        self.assert_in_env_folder()
+        
+    def assert_in_env_folder(self):
+        env_dir = "/home/ec2-user/environment/envs"
+        envs = [f"{os.path.join(env_dir, name)}" for name in os.listdir(env_dir) if os.path.isdir(os.path.join(env_dir, name))] 
+        if "/".join(self.home.split("/")[:-1]) not in envs:
+            click.echo(f"home dir: {self.home}")
+            raise Exception(f"illegal home, you must be in an env dir located here: {env_dir}")
         
         
     def init_git_reponame_and_url(self):
@@ -55,6 +63,13 @@ class Context:
                 gitops_flags = config['gitops']['flux']['flags']  
                 self.gitops_repo_name = gitops_flags['repository']
                 self.github_user = gitops_flags['owner']
+                
+            current_context = exec_command("kubectl config current-context")
+            found_cluster_name = current_context.split("@")[1].split(".")[0]
+            if found_cluster_name != self.cluster_name:
+                raise Exception(f"current context doesn't match cluster_name ({current_context}, {self.cluster_name})")
+                
+            
                 
                 
     def gitops_repo_url(self):
@@ -80,7 +95,7 @@ class Context:
 pass_ctx = click.make_pass_decorator(Context)
 
 
-@click.group()
+@click.group(chain=True)
 @click.option(
     "--ctx_home",
     envvar="CTX_HOME",
@@ -120,6 +135,9 @@ def create_cluster(ctx, cluster_name, github_username, key_arn):
     eksctl_create_cmd = f"eksctl create cluster -f '{ctx.path_to_create_cluster_yaml}'"
     click.echo(eksctl_create_cmd)    
     exec_command(eksctl_create_cmd)
+    
+    #in order to be able to chain subsequent commands
+    ctx.init_git_reponame_and_url()
 
 
 @cli.command()
@@ -151,6 +169,8 @@ def create_git_source_apps(ctx):
         
         #generate the manifest
         exec_command(f"{git_src_apps_cmd} > {app_source_yaml}")
+        exec_command(f"cd {{ctx.gitops_repo_name}}")
+        exec_command("git add . && git commit -m \"add git apps source config\" && git push" )
 
 
 @cli.command()
@@ -267,8 +287,37 @@ def configure_alb_controller(ctx):
         
     cmd = f"kubectl apply -f {alb_ctrl_json}"
     exec_command(cmd)
-        
+
+
+@cli.command()
+@pass_ctx
+def create_external_dns(ctx):
+    pass
     
+
+cluster_config = {
+    "dev": "i-053c02913aa8a8eee@gitops-poc-dev.eu-central-1.eksctl.io",
+    "test": "i-053c02913aa8a8eee@gitops-poc-test.eu-central-1.eksctl.io"
+}
+
+@cli.command()
+@pass_ctx
+@click.option("--cluster", prompt="environment (dev, test)")
+def switch_cluster(ctx, cluster):
+    cmd = f"kubectl config use-context {cluster_config[cluster]}"
+    exec_command(cmd)
+    
+    
+@cli.command()
+@pass_ctx
+def current_cluster(ctx):
+    found_cluster = exec_command("kubectl config current-context")
+    for env, cluster in cluster_config.items():
+        if cluster == found_cluster:
+            click.echo(f"current cluster context is: {env}")
+            return
+        
+    click.echo(f"unkonwn cluster found")
     
 @cli.command()
 @pass_ctx
