@@ -115,7 +115,7 @@ def cli(ctx, ctx_home, verbose, account_id):
 @pass_ctx
 @click.option("--cluster_name", prompt="enter cluster name")
 @click.option("--github_username", default="gerry-swisscom")
-@click.option("--key_arn", prompt="enter kms key arn")
+@click.option("--key_arn", prompt="enter kms key arn", default="arn:aws:kms:eu-central-1:259363168031:key/2a7fb1cc-06ac-40d1-89e5-ef06dc6b9bf7")
 def create_cluster(ctx, cluster_name, github_username, key_arn):
     
     create_folder(ctx.create_cluster_dir, raise_ex_if_present=True)
@@ -272,6 +272,10 @@ def configure_alb_controller(ctx):
     --validate=false \
     -f https://github.com/jetstack/cert-manager/releases/download/v1.5.4/cert-manager.yaml"""
     exec_command(cmd)
+    
+    #TODO: check if cert manager was installed successfully
+    # exec command and assume answer below $ cmctl check api
+    #The cert-manager API is ready
     
     click.echo("install controller")
     alb_ctrl_json = os.path.join(ctx.alb_controller_dir, "v2_3_0_full.yaml")
