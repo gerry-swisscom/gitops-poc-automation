@@ -7,6 +7,8 @@ from contextlib import contextmanager
 import yaml
 import boto3
 import click
+import time
+import base64
 
 def create_folder(folder_path, raise_ex_if_present=False):
     Path(folder_path).mkdir(parents=False, exist_ok=not raise_ex_if_present)
@@ -45,6 +47,7 @@ class Context:
         self.permissions_dir = os.path.join(self.home, "permissions")
         self.path_to_aws_auth_yaml = os.path.join(self.permissions_dir, "aws-auth.yaml")
         self.alb_controller_dir = os.path.join(self.home, "alb_controller")
+        self.argocd_dir = os.path.join(self.home, "argo_cd")
         self.assert_in_env_folder()
         
     def assert_in_env_folder(self):
@@ -75,6 +78,8 @@ class Context:
     def gitops_repo_url(self):
         return f"git@github.com:{self.github_user}/{self.gitops_repo_name}.git"
     
+    def https_repo_url(self):
+        return f"https://github.com/{self.github_user}/{self.gitops_repo_name}.git"
 
     def _createHomeIfMissing(self):
         create_folder(self.home)
@@ -295,18 +300,67 @@ def configure_alb_controller(ctx):
 
 @cli.command()
 @pass_ctx
-def create_external_dns(ctx):
-    pass
+def install_argo(ctx):
+    exec_command("flux suspend kustomization --all")
+    exec_command("kubectl create namespace argocd")
+    exec_command("kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml")
+    
+    time.sleep(10)
+    
+    create_folder(ctx.argocd_dir)
+    cluster_cfg = os.path.join(ctx.argocd_dir, "cluster.yaml")
+    cluster_cfg_template    = Path(__file__).parent / 'res' / 'argocd' / 'cluster-template.yaml'
+    cluster_cfg_params = {
+        "<repo-url>": ctx.https_repo_url()
+    }
+    load_template_and_replace_placeholder(cluster_cfg_template, cluster_cfg, cluster_cfg_params)
+    exec_command(f"kubectl apply -f {cluster_cfg}")
+    
+    repo_cfg = os.path.join(ctx.argocd_dir, "repo.yaml")
+    repo_cfg_template       = Path(__file__).parent / 'res' / 'argocd' / 'repo-template.yaml'
+    repo_cfg_params = {
+        "<cluster-name>":   ctx.cluster_name,
+        "<repo-url>":       ctx.https_repo_url(),
+        "<github-token>":   os.environ['GITHUB_TOKEN']
+    }
+    load_template_and_replace_placeholder(repo_cfg_template, repo_cfg, repo_cfg_params)
+    exec_command(f"kubectl apply -f {repo_cfg}")
+    
+def load_template_and_replace_placeholder(src, dest, placeholder_dict):
+    with open(src) as f:
+        content = f.read()
+        
+    with open(dest, 'w') as f:
+        for key, value in placeholder_dict.items():
+            content = content.replace(key, value)
+        f.write(content)
+
+def base64_encode(a_string):
+    message_bytes = a_string.encode('ascii')
+    base64_bytes = base64.b64encode(message_bytes)
+    return base64_bytes.decode('ascii')
+
+@cli.command()
+@pass_ctx
+def oidc_broker(ctx):
+    click.echo(f"current context is {ctx.cluster_name}")
+    exec_command(f'aws eks describe-cluster --name {ctx.cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"')
+
+@cli.command()
+@pass_ctx
+def current(ctx):
+    click.echo(f"current context is {ctx.cluster_name}")
     
 
 cluster_config = {
-    "dev": "i-053c02913aa8a8eee@gitops-poc-dev.eu-central-1.eksctl.io",
-    "test": "i-053c02913aa8a8eee@gitops-poc-test.eu-central-1.eksctl.io"
+    "dev":  "i-053c02913aa8a8eee@gitops-poc-dev.eu-central-1.eksctl.io",
+    "test": "i-053c02913aa8a8eee@gitops-poc-test.eu-central-1.eksctl.io",
+    "prod": "i-053c02913aa8a8eee@gitops-poc-prod.eu-central-1.eksctl.io"
 }
 
 @cli.command()
 @pass_ctx
-@click.option("--cluster", prompt="environment (dev, test)")
+@click.option("--cluster", prompt="environment (dev, test, prod)")
 def switch_cluster(ctx, cluster):
     cmd = f"kubectl config use-context {cluster_config[cluster]}"
     exec_command(cmd)
