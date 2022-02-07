@@ -48,7 +48,7 @@ class Context:
         self.path_to_aws_auth_yaml = os.path.join(self.permissions_dir, "aws-auth.yaml")
         self.alb_controller_dir = os.path.join(self.home, "alb_controller")
         self.argocd_dir = os.path.join(self.home, "argo_cd")
-        self.assert_in_env_folder()
+        #self.assert_in_env_folder()
         
     def assert_in_env_folder(self):
         env_dir = "/home/ec2-user/environment/envs"
@@ -115,6 +115,86 @@ def cli(ctx, ctx_home, verbose, account_id):
     ctx.obj = Context(os.path.abspath(ctx_home))
     ctx.obj.verbose = verbose
     ctx.obj.account_id = account_id
+
+@cli.command()
+def current_user():
+    iam = boto3.resource('iam')
+    current_user = iam.CurrentUser()
+    click.echo(f'arn: {current_user.arn}')
+
+@cli.command()
+@pass_ctx
+@click.option("--cluster_name", prompt="enter cluster name", default="test_create_cluster")
+@click.option("--github_username", prompt="enter github username", default="gerry-swisscom")
+def bootstrap_cluster(ctx, cluster_name, github_username):
+    
+
+    kms_client = boto3.client('kms')
+    
+    arn = 'arn:aws:kms:eu-central-1:259363168031:key/9b617e2e-0a08-4e6f-8065-618d56e91428'
+
+    kms_client.create_alias(
+        AliasName=f'alias/eks_key_{cluster_name}',
+        TargetKeyId=arn
+    )
+    
+    policy_name = 'default'
+    policy = """
+    {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "Allow access for Key Administrators",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "arn:aws:iam::259363168031:user/tgdkige1"
+                },
+                "Action": [
+                    "kms:Create*",
+                    "kms:Describe*",
+                    "kms:Enable*",
+                    "kms:List*",
+                    "kms:Put*",
+                    "kms:Update*",
+                    "kms:Revoke*",
+                    "kms:Disable*",
+                    "kms:Get*",
+                    "kms:Delete*",
+                    "kms:TagResource",
+                    "kms:UntagResource",
+                    "kms:ScheduleKeyDeletion",
+                    "kms:CancelKeyDeletion"
+                ],
+                "Resource": "*"
+            },
+            {
+                "Sid": "Allow access for ExampleUser",
+                "Effect": "Allow",
+                "Principal": {"AWS": "arn:aws:iam::259363168031:user/tgdkige1"},
+                "Action": [
+                    "kms:Encrypt",
+                    "kms:GenerateDataKey*",
+                    "kms:Decrypt",
+                    "kms:DescribeKey",
+                    "kms:ReEncrypt*"
+                ],
+                "Resource": "*"
+            }
+        ]
+    }"""
+    response = kms_client.put_key_policy(
+        KeyId=arn,
+        Policy=policy,
+        PolicyName=policy_name
+    )
+
+    create_folder(ctx.create_cluster_dir, raise_ex_if_present=False)
+    click.echo('create the eksctl manifest')
+    fn = Path(__file__).parent / 'res' / 'create_eks_cluster_template.yaml'
+    with open(fn) as f:
+        data = f.read()
+
+
 
 @cli.command()
 @pass_ctx
