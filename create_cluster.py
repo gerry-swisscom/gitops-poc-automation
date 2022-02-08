@@ -162,67 +162,6 @@ def create_encryption_key(cluster_name):
         AliasName=f'alias/eks_key_{cluster_name}',
         TargetKeyId=arn
     )
-    
-    policy_name = 'default'
-    policy = """
-    {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Sid": "Enable IAM User Permissions",
-                "Effect": "Allow",
-                "Principal": {
-                    "AWS": "arn:aws:iam::{account_id}:root"
-                },
-                "Action": "kms:*",
-                "Resource": "*"
-            },
-            {
-                "Sid": "Allow access for Key Administrators",
-                "Effect": "Allow",
-                "Principal": {
-                    "AWS": "{user_arn}"
-                },
-                "Action": [
-                    "kms:Create*",
-                    "kms:Describe*",
-                    "kms:Enable*",
-                    "kms:List*",
-                    "kms:Put*",
-                    "kms:Update*",
-                    "kms:Revoke*",
-                    "kms:Disable*",
-                    "kms:Get*",
-                    "kms:Delete*",
-                    "kms:TagResource",
-                    "kms:UntagResource",
-                    "kms:ScheduleKeyDeletion",
-                    "kms:CancelKeyDeletion"
-                ],
-                "Resource": "*"
-            },
-            {
-                "Sid": "Allow access for ExampleUser",
-                "Effect": "Allow",
-                "Principal": {"AWS": "{user_arn}"},
-                "Action": [
-                    "kms:Encrypt",
-                    "kms:GenerateDataKey*",
-                    "kms:Decrypt",
-                    "kms:DescribeKey",
-                    "kms:ReEncrypt*"
-                ],
-                "Resource": "*"
-            }
-        ]
-    }""".replace("{user_arn}", user_arn).replace("{account_id}", account_id)
-
-    response = kms_client.put_key_policy(
-        KeyId=arn,
-        Policy=policy,
-        PolicyName=policy_name
-    )
-
 
 
 @cli.command()
