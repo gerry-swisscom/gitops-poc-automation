@@ -17,6 +17,7 @@ def create_folder(folder_path, raise_ex_if_present=False):
 
 def exec_command(cmd, suppress_error_logs=False):
     try:
+        click.echo(cmd)
         out_bytes = subprocess.check_output(cmd, shell=True)
         out_text = out_bytes.decode('utf-8')
         click.echo(out_text)
@@ -29,6 +30,9 @@ def exec_command(cmd, suppress_error_logs=False):
             out_text = out_bytes.decode('utf-8')
             click.echo(out_text)
         raise e
+ 
+def echo_comment(msg):
+    click.echo(f"# {msg}")
         
 
 class Context:
@@ -63,23 +67,13 @@ class Context:
             with open(self.path_to_create_cluster_yaml) as f:
                 config = yaml.full_load(f)
                 self.cluster_name = config['metadata']['name']
-                gitops_flags = config['gitops']['flux']['flags']  
-                self.gitops_repo_name = gitops_flags['repository']
-                self.github_user = gitops_flags['owner']
                 
-            current_context = exec_command("kubectl config current-context")
-            found_cluster_name = current_context.split("@")[1].split(".")[0]
-            if found_cluster_name != self.cluster_name:
-                raise Exception(f"current context doesn't match cluster_name ({current_context}, {self.cluster_name})")
+            #current_context = exec_command("kubectl config current-context")
+            #found_cluster_name = current_context.split("@")[1].split(".")[0]
+            #if found_cluster_name != self.cluster_name:
+            #    raise Exception(f"current context doesn't match cluster_name ({current_context}, {self.cluster_name})")
                 
             
-                
-                
-    def gitops_repo_url(self):
-        return f"git@github.com:{self.github_user}/{self.gitops_repo_name}.git"
-    
-    def https_repo_url(self):
-        return f"https://github.com/{self.github_user}/{self.gitops_repo_name}.git"
 
     def _createHomeIfMissing(self):
         create_folder(self.home)
@@ -92,7 +86,7 @@ class Context:
     def set_config(self, key, value):
         self.config[key] = value
         if self.verbose:
-            click.echo(f"config[{key}] = {value}", file=sys.stderr)
+            echo_comment(f"config[{key}] = {value}", file=sys.stderr)
 
     def __repr__(self):
         return f"<Context {self.home}>"
@@ -108,35 +102,68 @@ pass_ctx = click.make_pass_decorator(Context)
     help="Changes the context folder location.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enables verbose mode.")
-@click.option("--account_id", default="259363168031",  envvar="AWS_ACCOUNT_ID")
 @click.version_option("1.0")
 @click.pass_context
-def cli(ctx, ctx_home, verbose, account_id):
+def cli(ctx, ctx_home, verbose):
     ctx.obj = Context(os.path.abspath(ctx_home))
     ctx.obj.verbose = verbose
+    account_id = boto3.client('sts').get_caller_identity().get('Account')
     ctx.obj.account_id = account_id
 
 
 
 @cli.command()
 @pass_ctx
-@click.option("--cluster_name", prompt="enter cluster name", default="test_create_cluster")
+@click.option("--cluster_name", prompt="enter cluster name", default="test-create-cluster")
 @click.option("--github_username", prompt="enter github username", default="gerry-swisscom")
 def bootstrap_cluster(ctx, cluster_name, github_username):
     #create_encryption_key(cluster_name)
-
+    key_arn = exec_command(f"aws kms describe-key --key-id {key_alias_name(cluster_name)} --query KeyMetadata.Arn --output text")
+    echo_comment(f'key arn: {key_arn}')
+    
     create_folder(ctx.create_cluster_dir, raise_ex_if_present=False)
-    click.echo('create the eksctl manifest')
+    echo_comment('create the eksctl manifest ...')
     fn = Path(__file__).parent / 'res' / 'create_eks_cluster_template.yaml'
     with open(fn) as f:
         data = f.read()
+        
+    routeable_subnet_ids, non_routeable_subnet_ids = read_subnets()
+    for idx, s_id in enumerate(routeable_subnet_ids):
+        data = data.replace(f"<routable-{idx}>",  s_id)
+        
+    for idx, s_id in enumerate(non_routeable_subnet_ids):
+        data = data.replace(f"<non-routable-{idx}>",  s_id)
+    
+    data = data.replace("<cluster-name>", cluster_name)
+    data = data.replace("<key-arn>", key_arn)
+        
+    with open(ctx.path_to_create_cluster_yaml, 'wt') as f:
+        f.write(data)
+     
+    eksctl_create_cmd = f"eksctl create cluster -f '{ctx.path_to_create_cluster_yaml}'"
+    exec_command(eksctl_create_cmd)
+    
+    
+def read_subnets():
+    ec2_client = boto3.client("ec2")
+    routeable_items = ec2_client.describe_subnets(Filters = [{'Name': 'tag:Subnet', 'Values': ['private-routable'] }])['Subnets'] 
+    routable_subnet_ids =  [item['SubnetId'] for item in routeable_items]
+    
+    non_routeable_items = ec2_client.describe_subnets(Filters = [{'Name': 'tag:Subnet', 'Values': ['private-nonroutable'] }])['Subnets'] 
+    non_routable_subnet_ids = [item['SubnetId'] for item in non_routeable_items]
+    
+    #we expect exactly 3 subnets, one for each AZ
+    assert(len(routable_subnet_ids) == 3)
+    assert(len(non_routable_subnet_ids) == 3)
+    
+    return (routable_subnet_ids, non_routable_subnet_ids)
+    
+        
+def key_alias_name(cluster_name):
+    return f'alias/eks_key_{cluster_name}'
 
 def create_encryption_key(cluster_name):
     iam_client = boto3.resource('iam')
-    current_user = iam_client.CurrentUser()
-    click.echo(f'current user arn: {current_user.arn}')
-
-    user_arn = current_user.arn
 
     kms_client = boto3.client('kms')
 
@@ -159,7 +186,7 @@ def create_encryption_key(cluster_name):
     arn = response['KeyMetadata']['KeyId']
 
     kms_client.create_alias(
-        AliasName=f'alias/eks_key_{cluster_name}',
+        AliasName=key_alias_name(cluster_name),
         TargetKeyId=arn
     )
 
@@ -205,26 +232,6 @@ def prepare_git_secret(ctx):
     
     exec_command(f"kubectl create -f {ctx.path_to_sercret_file}")
     
-    
-@cli.command()
-@pass_ctx
-def create_git_source_apps(ctx):
-    if ctx.is_cluster_created():
-        cmd = f"git clone {ctx.gitops_repo_url()}"
-        click.echo(f"clone gitops repo: {ctx.gitops_repo_name}")
-        exec_command(cmd)
-        create_folder(f"./{ctx.gitops_repo_name}/clusters/applications")
-        ssh_url = f"ssh://git@github.com/{ctx.github_user}/{ctx.gitops_repo_name}"
-        app_source_yaml = f"./{ctx.gitops_repo_name}/clusters/applications/applications-source.yaml"
-        git_src_apps_cmd = f"flux create source git applications --url={ssh_url} --branch=main --interval=30s --namespace=default  --secret-ref={ctx.gitsource_apps_secret_name} --export"
-        click.echo(git_src_apps_cmd)
-        exec_command(git_src_apps_cmd)
-        
-        #generate the manifest
-        exec_command(f"{git_src_apps_cmd} > {app_source_yaml}")
-        exec_command(f"cd {{ctx.gitops_repo_name}}")
-        exec_command("git add . && git commit -m \"add git apps source config\" && git push" )
-
 
 @cli.command()
 @click.option('--user_arn', default='arn:aws:iam::259363168031:user/tgdkige1', prompt='enter user arn')
@@ -348,18 +355,20 @@ def configure_alb_controller(ctx):
 
 @cli.command()
 @pass_ctx
-def install_argo(ctx):
-    exec_command("flux suspend kustomization --all")
+@click.option("--github_username", prompt="enter github username", default="gerry-swisscom")
+def install_argo(ctx, github_username):
     exec_command("kubectl create namespace argocd")
     exec_command("kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml")
     
-    time.sleep(10)
+    time.sleep(30)
+    
+    https_repo_url = f"https://github.com/{github_username}/{ctx.cluster_name}.git"
     
     create_folder(ctx.argocd_dir)
     cluster_cfg = os.path.join(ctx.argocd_dir, "cluster.yaml")
     cluster_cfg_template    = Path(__file__).parent / 'res' / 'argocd' / 'cluster-template.yaml'
     cluster_cfg_params = {
-        "<repo-url>": ctx.https_repo_url()
+        "<repo-url>": https_repo_url
     }
     load_template_and_replace_placeholder(cluster_cfg_template, cluster_cfg, cluster_cfg_params)
     exec_command(f"kubectl apply -f {cluster_cfg}")
@@ -368,7 +377,7 @@ def install_argo(ctx):
     repo_cfg_template       = Path(__file__).parent / 'res' / 'argocd' / 'repo-template.yaml'
     repo_cfg_params = {
         "<cluster-name>":   ctx.cluster_name,
-        "<repo-url>":       ctx.https_repo_url(),
+        "<repo-url>":       https_repo_url,
         "<github-token>":   os.environ['GITHUB_TOKEN']
     }
     load_template_and_replace_placeholder(repo_cfg_template, repo_cfg, repo_cfg_params)

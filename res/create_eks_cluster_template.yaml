@@ -6,38 +6,31 @@ metadata:
   region: eu-central-1
 vpc:
   subnets:
-    public:
-      eu-central-1a: { id: subnet-09321c9d93ed6f285 }
-      eu-central-1b: { id: subnet-0c05cf19e1a01fd06 }
-      eu-central-1c: { id: subnet-0c744de5e05a54697 }
+    private:
+      routable-1: { id: <routable-0> }
+      routable-2: { id: <routable-1> }
+      routable-3: { id: <routable-2> }
+      non-routable-1: { id: <non-routable-0> }
+      non-routable-2: { id: <non-routable-1> }
+      non-routable-3: { id: <non-routable-2> }
 iam:
   withOIDC: true
-gitops:
-  flux:
-    gitProvider: "github"
-    flags:
-      owner: "<your GitHub Username>"
-      repository: "<cluster-name>"
-      private: "false"
-      personal: "true"
-      branch: "main"
-      namespace: "flux-system"
-      path: "clusters"
-      read-write-key: "true"
 nodeGroups:
   - name: <cluster-name>-ng
     labels: { role: workers }
     instanceType: m5.large
     desiredCapacity: 3
+    privateNetworking: true
+    subnets:
+      - <non-routable-0>
+      - <non-routable-1>
+      - <non-routable-2>
     volumeSize: 80
     iam:
       withAddonPolicies:
-        imageBuilder: true
         autoScaler: true
         externalDNS: true
         certManager: true
-        appMesh: true
-        appMeshPreview: true
         ebs: true
         fsx: true
         efs: true
