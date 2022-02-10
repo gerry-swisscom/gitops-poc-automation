@@ -117,7 +117,7 @@ def cli(ctx, ctx_home, verbose):
 @click.option("--cluster_name", prompt="enter cluster name", default="test-create-cluster")
 @click.option("--github_username", prompt="enter github username", default="gerry-swisscom")
 def bootstrap_cluster(ctx, cluster_name, github_username):
-    #create_encryption_key(cluster_name)
+    create_encryption_key(cluster_name)
     key_arn = exec_command(f"aws kms describe-key --key-id {key_alias_name(cluster_name)} --query KeyMetadata.Arn --output text")
     echo_comment(f'key arn: {key_arn}')
     
@@ -189,48 +189,6 @@ def create_encryption_key(cluster_name):
         AliasName=key_alias_name(cluster_name),
         TargetKeyId=arn
     )
-
-
-@cli.command()
-@pass_ctx
-@click.option("--cluster_name", prompt="enter cluster name")
-@click.option("--github_username", default="gerry-swisscom")
-@click.option("--key_arn", prompt="enter kms key arn", default="arn:aws:kms:eu-central-1:259363168031:key/2a7fb1cc-06ac-40d1-89e5-ef06dc6b9bf7")
-def create_cluster(ctx, cluster_name, github_username, key_arn):
-    
-    create_folder(ctx.create_cluster_dir, raise_ex_if_present=True)
-    click.echo('create the eksctl manifest')
-    fn = Path(__file__).parent / 'res' / 'create_eks_cluster_template.yaml'
-    with open(fn) as f:
-        data = f.read()
-        
-    data = data.replace("<cluster-name>", cluster_name)
-    data = data.replace("<your GitHub Username>", github_username)
-    data = data.replace("<key-arn>", key_arn)
-    data = data.replace("<account-id>", ctx.account_id)
-        
-    with open(ctx.path_to_create_cluster_yaml, 'wt') as f:
-        f.write(data)
-     
-    eksctl_create_cmd = f"eksctl create cluster -f '{ctx.path_to_create_cluster_yaml}'"
-    click.echo(eksctl_create_cmd)    
-    exec_command(eksctl_create_cmd)
-    
-    #in order to be able to chain subsequent commands
-    ctx.init_git_reponame_and_url()
-
-
-@cli.command()
-@pass_ctx
-def prepare_git_secret(ctx):
-    
-    create_folder(ctx.path_to_secrets_dir, raise_ex_if_present=False)
-    click.echo("export and prepare gitsource apps secret")
-    export_cmd = f"kubectl get secret -o json flux-system --namespace=flux-system | jq '.metadata.namespace |= \"default\"'  | jq '.metadata.name |= \"{ctx.gitsource_apps_secret_name}\"' > {ctx.path_to_sercret_file}"
-    
-    exec_command(export_cmd)
-    
-    exec_command(f"kubectl create -f {ctx.path_to_sercret_file}")
     
 
 @cli.command()
