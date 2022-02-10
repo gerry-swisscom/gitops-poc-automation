@@ -86,7 +86,7 @@ class Context:
     def set_config(self, key, value):
         self.config[key] = value
         if self.verbose:
-            echo_comment(f"config[{key}] = {value}", file=sys.stderr)
+            echo_comment(f"config[{key}] = {value}")
 
     def __repr__(self):
         return f"<Context {self.home}>"
@@ -189,6 +189,13 @@ def create_encryption_key(cluster_name):
         AliasName=key_alias_name(cluster_name),
         TargetKeyId=arn
     )
+    
+
+@cli.command()
+@pass_ctx
+def install_crossplane(ctx, user_arn, user_name):   
+    pass
+
     
 
 @cli.command()
