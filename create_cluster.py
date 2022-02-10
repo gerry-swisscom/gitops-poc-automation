@@ -109,13 +109,19 @@ def cli(ctx, ctx_home, verbose):
     ctx.obj.verbose = verbose
     account_id = boto3.client('sts').get_caller_identity().get('Account')
     ctx.obj.account_id = account_id
+    
+    
 
+cluster_name = "test-create-cluster"
+github_username = "gerry-swisscom"
+https_repo_url = f"https://github.com/{github_username}/{cluster_name}.git"
+ssh_repo_url = f"git@github.com:{github_username}/{cluster_name}.git"
 
 
 @cli.command()
 @pass_ctx
-@click.option("--cluster_name", prompt="enter cluster name", default="test-create-cluster")
-@click.option("--github_username", prompt="enter github username", default="gerry-swisscom")
+@click.option("--cluster_name", prompt="enter cluster name", default=cluster_name)
+@click.option("--github_username", prompt="enter github username", default=github_username)
 def bootstrap_cluster(ctx, cluster_name, github_username):
     create_encryption_key(cluster_name)
     key_arn = exec_command(f"aws kms describe-key --key-id {key_alias_name(cluster_name)} --query KeyMetadata.Arn --output text")
@@ -193,9 +199,30 @@ def create_encryption_key(cluster_name):
 
 @cli.command()
 @pass_ctx
-def install_crossplane(ctx, user_arn, user_name):   
-    pass
-
+def install_crossplane(ctx):   
+    #exec_command(f"git clone {ssh_repo_url}")
+    #exec_command("kubectl create namespace crossplane-system")
+    install_helm_app("crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.2")
+    
+    
+def install_helm_app(name, target_namespace, chart, release_name, repo_url, target_revision):
+    
+    fn = Path(__file__).parent / 'res' / 'argocd' / 'templates' / 'helm-app-template.yaml'
+    with open(fn) as f:
+        data = f.read()
+        
+    data = data.replace("<name>", name)
+    data = data.replace("<target-namespace>", target_namespace)
+    data = data.replace("<chart>", chart)
+    data = data.replace("<release-name>", release_name)
+    data = data.replace("<helm-repo-url>", repo_url)
+    data = data.replace("<target-revision>",  target_revision)
+    
+    path_to_yaml = os.path.join(cluster_name, "clusters", "infra", f"{name}.yaml")
+    with open(path_to_yaml, 'wt') as f:
+        f.write(data)
+    
+    exec_command(f'cd {cluster_name} && git add . && git commit -m "install argo helm app {name}" && git push')
     
 
 @cli.command()
@@ -320,14 +347,12 @@ def configure_alb_controller(ctx):
 
 @cli.command()
 @pass_ctx
-@click.option("--github_username", prompt="enter github username", default="gerry-swisscom")
+@click.option("--github_username", prompt="enter github username", default=github_username)
 def install_argo(ctx, github_username):
     exec_command("kubectl create namespace argocd")
     exec_command("kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml")
     
     time.sleep(30)
-    
-    https_repo_url = f"https://github.com/{github_username}/{ctx.cluster_name}.git"
     
     create_folder(ctx.argocd_dir)
     cluster_cfg = os.path.join(ctx.argocd_dir, "cluster.yaml")

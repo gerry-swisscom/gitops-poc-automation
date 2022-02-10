@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  labels:
+    helm: true
+  name: <name>
+  namespace: argocd
+spec:
+  destination:
+    namespace: <target-namespace>
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    chart: <chart>
+    helm:
+      releaseName: <release-name>
+    repoURL: <helm-repo-url>
+    targetRevision: <target-revision>
+  syncPolicy:
+    automated: {}
