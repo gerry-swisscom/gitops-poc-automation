@@ -201,7 +201,7 @@ def create_encryption_key(cluster_name):
 @pass_ctx
 def install_crossplane(ctx):   
     #exec_command(f"git clone {ssh_repo_url}")
-    #exec_command("kubectl create namespace crossplane-system")
+    exec_command("kubectl create namespace crossplane-system")
     install_helm_app("crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.2")
     
     
@@ -222,8 +222,118 @@ def install_helm_app(name, target_namespace, chart, release_name, repo_url, targ
     with open(path_to_yaml, 'wt') as f:
         f.write(data)
     
-    exec_command(f'cd {cluster_name} && git add . && git commit -m "install argo helm app {name}" && git push')
+    commit_and_push_env_repo_changes(f"install argo helm app {name}")
     
+    
+def install_argo_app(name, target_namespace, repo_url, path):
+    fn = Path(__file__).parent / 'res' / 'argocd' / 'templates' / 'app-template.yaml'
+    with open(fn) as f:
+        data = f.read()
+        
+    data = data.replace("<name>", name)
+    data = data.replace("<repo-url>", repo_url)
+    data = data.replace("<path>", path)
+    data = data.replace("<target-namespace>", target_namespace)
+    
+    path_to_yaml = os.path.join(cluster_name, "clusters", "infra", f"{name}.yaml")
+    with open(path_to_yaml, 'wt') as f:
+        f.write(data)
+    
+    
+def commit_and_push_env_repo_changes(message):
+    exec_command(f'cd {cluster_name} && git add . && git commit -m "{message}" && git push')
+    
+
+@cli.command()
+@pass_ctx
+def configure_sa_and_aws_provider(ctx):
+    role_name = f"crossplane_provider_aws_{cluster_name}"
+    ensure_role_for_crossplane_provider(ctx, role_name)
+    
+    fn = Path(__file__).parent / 'res' / 'crossplane' / 'provider-config_1.yaml'
+    with open(fn) as f:
+        data = f.read()
+        
+    data = data.replace("<account-id>", ctx.account_id)
+    data = data.replace("<iam-role>", role_name)
+    
+    path_to_dir = os.path.join(cluster_name, "infra", "aws-provider-config")
+    create_folder(path_to_dir)
+    path_to_yaml = os.path.join(path_to_dir, "manifest.yaml")
+    os.remove(path_to_yaml)
+    with open(path_to_yaml, 'wt') as f:
+        f.write(data)
+        
+    exec_command(f"kubectl apply -f {path_to_yaml}")
+    #exec_command("kubectl -n crossplane-system wait --for condition=established --timeout=60s crd/providerconfigs.aws.crossplane.io")
+    time.sleep(30)
+        
+    fn = Path(__file__).parent / 'res' / 'crossplane' / 'provider-config_2.yaml'
+    with open(fn) as f:
+        data = f.read()
+    
+    with open(path_to_yaml, 'at') as f:
+        f.write(data)
+        
+    exec_command(f"kubectl apply -f {path_to_yaml}")
+    
+    app_name = "aws-provider-config"
+    install_argo_app(app_name, "default",  https_repo_url, "infra/aws-provider-config")
+    commit_and_push_env_repo_changes(f"install argo app {app_name}")
+    
+def ensure_role_for_crossplane_provider(ctx, role_name):
+    oidc_provider = do_query_oidc_provider(cluster_name)
+    
+    account_id = ctx.account_id
+    crossplance_ns = "crossplane-system"
+    trust_relationship = """{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${AWS_ACCOUNT_ID}:oidc-provider/${OIDC_PROVIDER}"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringLike": {
+          "${OIDC_PROVIDER}:sub": "system:serviceaccount:${SERVICE_ACCOUNT_NAMESPACE}:provider-aws-*"
+        }
+      }
+    }
+  ]
+}""".replace("${AWS_ACCOUNT_ID}", account_id).replace("${OIDC_PROVIDER}", oidc_provider).replace("${SERVICE_ACCOUNT_NAMESPACE}", crossplance_ns)
+    
+    iam = boto3.resource('iam')
+    role = iam.Role(role_name)
+    try:
+        role.load()
+        echo_comment(f"found {role.arn}")
+        echo_comment("nothing to do")
+    except iam.meta.client.exceptions.NoSuchEntityException as ex:
+        echo_comment("create role for service account")
+        echo_comment(f"create role with trust relationship: {trust_relationship}")
+        role = iam.create_role(
+            RoleName=role_name,
+            AssumeRolePolicyDocument=trust_relationship,
+            Description="IAM role for provider-aws",
+            Tags=[
+                {
+                    'Key': 'cluster',
+                    'Value': cluster_name
+                },
+            ]
+        )
+        role.attach_policy(
+            PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+        )
+
+@cli.command()
+@click.option('--role_name', default=f"crossplane_provider_aws_{cluster_name}", prompt='enter role name')
+@pass_ctx
+def create_crossplane_role(ctx, role_name):
+    ensure_role_for_crossplane_provider(ctx, role_name)
+
 
 @cli.command()
 @click.option('--user_arn', default='arn:aws:iam::259363168031:user/tgdkige1', prompt='enter user arn')
@@ -389,9 +499,13 @@ def base64_encode(a_string):
 
 @cli.command()
 @pass_ctx
-def oidc_broker(ctx):
-    click.echo(f"current context is {ctx.cluster_name}")
-    exec_command(f'aws eks describe-cluster --name {ctx.cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"')
+def oidc_provider(ctx):
+    do_query_oidc_provider(ctx.cluster_name)
+
+
+def do_query_oidc_provider(cluster_name):
+    click.echo(f"current context is {cluster_name}")
+    return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
 
 @cli.command()
 @pass_ctx
