@@ -211,7 +211,7 @@ def install_crossplane(ctx):
     install_helm_app("crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.2")
     
     
-def install_helm_app(name, target_namespace, chart, release_name, repo_url, target_revision):
+def install_helm_app(name, target_namespace, chart, release_name, repo_url, target_revision, path_to_app="clusters/infra", params=None, sync_wave=None, auto_commit=True):
     
     fn = Path(__file__).parent / 'res' / 'argocd' / 'templates' / 'helm-app-template.yaml'
     with open(fn) as f:
@@ -224,14 +224,21 @@ def install_helm_app(name, target_namespace, chart, release_name, repo_url, targ
     data = data.replace("<helm-repo-url>", repo_url)
     data = data.replace("<target-revision>",  target_revision)
     
-    path_to_yaml = os.path.join(cluster_name, "clusters", "infra", f"{name}.yaml")
+    if params:
+        data = enrich_params(data, params)
+    
+    if sync_wave:
+        data = add_sync_wave_annotation(data, sync_wave)
+    
+    path_to_yaml = path_to_yaml = f"{cluster_name}/{path_to_app}/{name}.yaml"
     with open(path_to_yaml, 'wt') as f:
         f.write(data)
     
-    commit_and_push_env_repo_changes(f"install argo helm app {name}")
+    if auto_commit:
+        commit_and_push_env_repo_changes(f"install argo helm app {name}")
     
     
-def install_argo_app(name, target_namespace, repo_url, path):
+def install_argo_app(name, target_namespace, repo_url, path, path_to_app="clusters/infra", sync_wave=None):
     fn = Path(__file__).parent / 'res' / 'argocd' / 'templates' / 'app-template.yaml'
     with open(fn) as f:
         data = f.read()
@@ -241,10 +248,27 @@ def install_argo_app(name, target_namespace, repo_url, path):
     data = data.replace("<path>", path)
     data = data.replace("<target-namespace>", target_namespace)
     
-    path_to_yaml = os.path.join(cluster_name, "clusters", "infra", f"{name}.yaml")
+    if sync_wave:
+        data = add_sync_wave_annotation(data, sync_wave)
+    
+    path_to_yaml = f"{cluster_name}/{path_to_app}/{name}.yaml"
     with open(path_to_yaml, 'wt') as f:
         f.write(data)
     
+def enrich_params(yaml_data, params):
+    yaml_obj = yaml.full_load(yaml_data)
+    enriched_params = [{"name": item[0], "value": item[1]} for item in params]
+    helm = yaml_obj["spec"]["source"]["helm"]
+    helm["parameters"] = enriched_params
+    yaml_obj["spec"]["source"]["helm"] = helm
+    return yaml.dump(yaml_obj)
+    
+def add_sync_wave_annotation(yaml_data, sync_wave):
+    yaml_obj = yaml.full_load(yaml_data)
+    metadata = yaml_obj['metadata']
+    metadata['annotations'] = {"argocd.argoproj.io/sync-wave": sync_wave}
+    yaml_obj['metadata'] = metadata
+    return yaml.dump(yaml_obj)
     
 def commit_and_push_env_repo_changes(message):
     exec_command(f'cd {cluster_name} && git add . && git commit -m "{message}" && git push')
@@ -334,15 +358,14 @@ def ensure_role_for_crossplane_provider(ctx, role_name):
         role.attach_policy(
             PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
         )
-        
 
 @cli.command()
 @pass_ctx
 def install_alb_controller(ctx):
     policy_name, policy_arn = ensure_alb_controller_policy(ctx)
     
-    app_name = "alb_controller_service_account"
-    install_argo_app(app_name, "kube-system",  https_repo_url, f"infra/{app_name}")
+    app_name = "alb-controller-service-account"
+    install_argo_app(app_name, "kube-system",  https_repo_url, f"infra/{app_name}", sync_wave="-1")
     
     fn = Path(__file__).parent / 'res' / 'alb_controller' / 'service_account_and_role_template.yaml'
     with open(fn) as f:
@@ -360,8 +383,18 @@ def install_alb_controller(ctx):
     
     with open(path_to_manifest, 'wt') as f:
         f.write(data)
+        
+    install_helm_app("cert-manager", "cert-manager", "cert-manager", "cert-manager", "https://charts.jetstack.io", "v1.7.1", sync_wave="-1", params=[("installCRDs", "true")], auto_commit=False)
     
-    #commit_and_push_env_repo_changes(f"install argo app {app_name}")
+    alb_controller_params = [
+        ("image.repository", "602401143452.dkr.ecr.eu-central-1.amazonaws.com/amazon/aws-load-balancer-controller"),
+        ("clusterName", cluster_name),
+        ("serviceAccount.create", "false"),
+        ("serviceAccount.name", "aws-load-balancer-controller")
+    ]
+    install_helm_app("aws-load-balancer-controller", "kube-system", "aws-load-balancer-controller", "aws-load-balancer-controller", "https://aws.github.io/eks-charts", "1.3.3", params=alb_controller_params, auto_commit=False)
+    
+    commit_and_push_env_repo_changes(f"install argo app {app_name}")
     
 
 def ensure_alb_controller_policy(ctx):

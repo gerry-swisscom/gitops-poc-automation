@@ -18,3 +18,5 @@ spec:
     targetRevision: <target-revision>
   syncPolicy:
     automated: {}
+    syncOptions:
+    - CreateNamespace=true 
