@@ -11,7 +11,7 @@ import time
 import base64
 
 def create_folder(folder_path, raise_ex_if_present=False):
-    Path(folder_path).mkdir(parents=False, exist_ok=not raise_ex_if_present)
+    Path(folder_path).mkdir(parents=True, exist_ok=not raise_ex_if_present)
     
 
 
@@ -123,7 +123,7 @@ ssh_repo_url = f"git@github.com:{github_username}/{cluster_name}.git"
 @click.option("--cluster_name", prompt="enter cluster name", default=cluster_name)
 @click.option("--github_username", prompt="enter github username", default=github_username)
 def bootstrap_cluster(ctx, cluster_name, github_username):
-    create_encryption_key(cluster_name)
+    ensure_encryption_key(cluster_name)
     key_arn = exec_command(f"aws kms describe-key --key-id {key_alias_name(cluster_name)} --query KeyMetadata.Arn --output text")
     echo_comment(f'key arn: {key_arn}')
     
@@ -168,33 +168,39 @@ def read_subnets():
 def key_alias_name(cluster_name):
     return f'alias/eks_key_{cluster_name}'
 
-def create_encryption_key(cluster_name):
+def ensure_encryption_key(cluster_name):
     iam_client = boto3.resource('iam')
 
     kms_client = boto3.client('kms')
-
     account_id = boto3.client('sts').get_caller_identity().get('Account')
     
-    response = kms_client.create_key(
-        Description=f'key for secrets encryption in eks cluster {cluster_name}',
-        KeyUsage='ENCRYPT_DECRYPT',
-        KeySpec='SYMMETRIC_DEFAULT',
-        Origin='AWS_KMS',
-        BypassPolicyLockoutSafetyCheck=False,
-        Tags=[
-            {
-                'TagKey': 'EKS cluster',
-                'TagValue': cluster_name
-            },
-        ],
-        MultiRegion=False
-    )
-    arn = response['KeyMetadata']['KeyId']
+    key_arn = f"arn:aws:kms:eu-central-1:{account_id}:alias/{key_alias_name(cluster_name)}"
 
-    kms_client.create_alias(
-        AliasName=key_alias_name(cluster_name),
-        TargetKeyId=arn
-    )
+    try:
+        kms_client.describe_key(KeyId=key_arn)
+        echo_comment("key found, nothing to do ...")
+    except kms_client.meta.client.exceptions.NotFoundException as ex:
+        echo_comment("create encryption key for EKS")
+        response = kms_client.create_key(
+            Description=f'key for secrets encryption in eks cluster {cluster_name}',
+            KeyUsage='ENCRYPT_DECRYPT',
+            KeySpec='SYMMETRIC_DEFAULT',
+            Origin='AWS_KMS',
+            BypassPolicyLockoutSafetyCheck=False,
+            Tags=[
+                {
+                    'TagKey': 'EKS cluster',
+                    'TagValue': cluster_name
+                },
+            ],
+            MultiRegion=False
+        )
+        arn = response['KeyMetadata']['KeyId']
+    
+        kms_client.create_alias(
+            AliasName=key_alias_name(cluster_name),
+            TargetKeyId=arn
+        )
     
 
 @cli.command()
@@ -260,7 +266,8 @@ def configure_sa_and_aws_provider(ctx):
     path_to_dir = os.path.join(cluster_name, "infra", "aws-provider-config")
     create_folder(path_to_dir)
     path_to_yaml = os.path.join(path_to_dir, "manifest.yaml")
-    os.remove(path_to_yaml)
+    if os.path.isfile(path_to_yaml): 
+        os.remove(path_to_yaml)
     with open(path_to_yaml, 'wt') as f:
         f.write(data)
         
@@ -282,7 +289,7 @@ def configure_sa_and_aws_provider(ctx):
     commit_and_push_env_repo_changes(f"install argo app {app_name}")
     
 def ensure_role_for_crossplane_provider(ctx, role_name):
-    oidc_provider = do_query_oidc_provider(cluster_name)
+    oidc_provider = do_query_oidc_provider()
     
     account_id = ctx.account_id
     crossplance_ns = "crossplane-system"
@@ -327,12 +334,60 @@ def ensure_role_for_crossplane_provider(ctx, role_name):
         role.attach_policy(
             PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
         )
+        
 
 @cli.command()
-@click.option('--role_name', default=f"crossplane_provider_aws_{cluster_name}", prompt='enter role name')
 @pass_ctx
-def create_crossplane_role(ctx, role_name):
-    ensure_role_for_crossplane_provider(ctx, role_name)
+def install_alb_controller(ctx):
+    policy_name, policy_arn = ensure_alb_controller_policy(ctx)
+    
+    app_name = "alb_controller_service_account"
+    install_argo_app(app_name, "kube-system",  https_repo_url, f"infra/{app_name}")
+    
+    fn = Path(__file__).parent / 'res' / 'alb_controller' / 'service_account_and_role_template.yaml'
+    with open(fn) as f:
+        data = f.read()
+        
+    data = data.replace("<account-id>", ctx.account_id)
+    data = data.replace("<role-name>", f"AmazonEKSLoadBalancerControllerRole-{cluster_name}".lower())
+    data = data.replace("<oidc-provider>", do_query_oidc_provider())
+    data = data.replace("<policy-arn>", policy_arn)
+    
+    
+    path_to_folder = f"{cluster_name}/infra/{app_name}"
+    create_folder(path_to_folder)
+    path_to_manifest = os.path.join(path_to_folder, "manifest.yaml")
+    
+    with open(path_to_manifest, 'wt') as f:
+        f.write(data)
+    
+    #commit_and_push_env_repo_changes(f"install argo app {app_name}")
+    
+
+def ensure_alb_controller_policy(ctx):
+    policy_name = "AWSLoadBalancerControllerAdditionalIAMPolicy"
+    account_id = ctx.account_id
+    policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
+    iam = boto3.resource('iam')
+    policy = iam.Policy(policy_arn)
+    try:
+        policy.load()
+        echo_comment("policy found, nothing to do ...")
+    except iam.meta.client.exceptions.NoSuchEntityException as ex:
+        echo_comment("create policy for alb controller service account role")
+        fn = Path(__file__).parent / 'res' / 'alb_controller' / 'iam_policy_v1_to_v2_additional.json'
+        with open(fn) as f:
+            policy_spec = f.read()
+        policy = iam.create_policy(
+            PolicyName=policy_name,
+            PolicyDocument=policy_spec,
+            Description='policy for alb controller service account role'
+        )
+        echo_comment(f"created policy with arn: {policy.arn}")
+        
+    return (policy_name, policy_arn)
+    
+    
 
 
 @cli.command()
@@ -362,7 +417,7 @@ def grant_browse_permissions(ctx, user_arn, user_name):
     
 @cli.command()
 @pass_ctx
-def configure_alb_controller(ctx):
+def deprecated_configure_alb_controller(ctx):
     click.echo("check if OIDC identity provider is configured for the cluster")
     oidc_provider_url = exec_command(f"aws eks describe-cluster --name {ctx.cluster_name} --query \"cluster.identity.oidc.issuer\" --output text")
     click.echo(f"- OIDC provider url: {oidc_provider_url}")
@@ -500,10 +555,10 @@ def base64_encode(a_string):
 @cli.command()
 @pass_ctx
 def oidc_provider(ctx):
-    do_query_oidc_provider(ctx.cluster_name)
+    do_query_oidc_provider()
 
 
-def do_query_oidc_provider(cluster_name):
+def do_query_oidc_provider():
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
 
