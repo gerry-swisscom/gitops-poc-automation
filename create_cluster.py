@@ -529,7 +529,7 @@ def install_argo(ctx, github_username):
     exec_command(f"kubectl apply -f {cluster_cfg}")
     
     repo_cfg = os.path.join(ctx.argocd_dir, "repo.yaml")
-    repo_cfg_template       = Path(__file__).parent / 'res' / 'argocd' / 'repo-template.yaml'
+    repo_cfg_template = Path(__file__).parent / 'res' / 'argocd' / 'repo-template.yaml'
     repo_cfg_params = {
         "<cluster-name>":   ctx.cluster_name,
         "<repo-url>":       https_repo_url,
@@ -537,6 +537,11 @@ def install_argo(ctx, github_username):
     }
     load_template_and_replace_placeholder(repo_cfg_template, repo_cfg, repo_cfg_params)
     exec_command(f"kubectl apply -f {repo_cfg}")
+    
+    # https://argo-cd.readthedocs.io/en/stable/operator-manual/health/#argocd-app
+    cm_patch_yaml = Path(__file__).parent / 'res' / 'argocd' / 'cm-synch-waves-patch.yaml'
+    exec_comand(f"kubectl apply -f {cm_patch_yaml}")
+    
     
 def load_template_and_replace_placeholder(src, dest, placeholder_dict):
     with open(src) as f:
