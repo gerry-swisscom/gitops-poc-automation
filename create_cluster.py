@@ -114,37 +114,71 @@ def bootstrap_cluster(ctx):
     fn = Path(__file__).parent / 'res' / 'create_eks_cluster_template.yaml'
     with open(fn) as f:
         data = f.read()
-        
-    routeable_subnet_ids, non_routeable_subnet_ids = read_subnets()
-    for idx, s_id in enumerate(routeable_subnet_ids):
-        data = data.replace(f"<routable-{idx}>",  s_id)
-        
-    for idx, s_id in enumerate(non_routeable_subnet_ids):
-        data = data.replace(f"<non-routable-{idx}>",  s_id)
     
     data = data.replace("<cluster-name>", cluster_name)
     data = data.replace("<key-arn>", key_arn)
+    
+    data = enrich_subnets(ctx, data)
         
     with open(ctx.path_to_create_cluster_yaml, 'wt') as f:
         f.write(data)
      
     eksctl_create_cmd = f"eksctl create cluster -f '{ctx.path_to_create_cluster_yaml}'"
     exec_command(eksctl_create_cmd)
+
+def enrich_subnets(ctx, yaml_str):
+    routable, non_routable, is_private_routable = read_subnets(ctx)
+    yaml_obj = yaml.full_load(yaml_str)
     
+    routable_items = [(f"routable-{idx}", {"id": subnet_id}) for idx, subnet_id in enumerate(routable)]
+    non_routable_items =  [(f"non-routable-{idx}", {"id": subnet_id}) for idx, subnet_id in enumerate(non_routable)]
+    if is_private_routable:
+        private_subnets = dict(routable_items + non_routable_items)
+        yaml_obj["vpc"]["subnets"]["private"] = private_subnets
+    else:
+        yaml_obj["vpc"]["subnets"]["public"] = routable_items
+        yaml_obj["vpc"]["subnets"]["private"] = non_routable_items
+        
+    yaml_obj["nodeGroups"][0]["subnets"] = non_routable
     
-def read_subnets():
+    return yaml.dump(yaml_obj)
+        
+    
+def read_subnets(ctx):
     ec2_client = boto3.client("ec2")
-    routeable_items = ec2_client.describe_subnets(Filters = [{'Name': 'tag:Subnet', 'Values': ['private-routable'] }])['Subnets'] 
-    routable_subnet_ids =  [item['SubnetId'] for item in routeable_items]
     
-    non_routeable_items = ec2_client.describe_subnets(Filters = [{'Name': 'tag:Subnet', 'Values': ['private-nonroutable'] }])['Subnets'] 
-    non_routable_subnet_ids = [item['SubnetId'] for item in non_routeable_items]
+    is_private_routable = True
+    filter_criteria_routable = [ 
+            {'Name': 'tag:Subnet', 'Values': ['private-routable'] },
+            {'Name': 'tag:EKS-Cluster', 'Values': [ctx.cluster_name] }
+        ]
+    routable_items = ec2_client.describe_subnets(Filters =filter_criteria_routable)['Subnets'] 
+    if len(routable_items) == 0:
+        is_private_routable = False
+        filter_criteria_routable = [ 
+                {'Name': 'tag:Subnet', 'Values': ['public-routable'] },
+                {'Name': 'tag:EKS-Cluster', 'Values': [ctx.cluster_name] }
+            ]
+        routable_items = ec2_client.describe_subnets(Filters =filter_criteria_routable)['Subnets'] 
+        if len(routable_items) == 0:
+            raise Exception("no routable subnets found")
+        
+    routable_subnet_ids =  [item['SubnetId'] for item in routable_items]
+    
+    filter_criteria_non_routable = [ 
+            {'Name': 'tag:Subnet', 'Values': ['private-nonroutable'] },
+            {'Name': 'tag:EKS-Cluster', 'Values': [ctx.cluster_name] }
+        ]
+    non_routable_items = ec2_client.describe_subnets(Filters = filter_criteria_non_routable)['Subnets'] 
+    if len(non_routable_items) == 0:
+        raise Exception("no non-routable subnets found")
+    non_routable_subnet_ids = [item['SubnetId'] for item in non_routable_items]
     
     #we expect exactly 3 subnets, one for each AZ
-    assert(len(routable_subnet_ids) == 3)
-    assert(len(non_routable_subnet_ids) == 3)
+    #assert(len(routable_subnet_ids) == 3)
+    #assert(len(non_routable_subnet_ids) == 3)
     
-    return (routable_subnet_ids, non_routable_subnet_ids)
+    return routable_subnet_ids, non_routable_subnet_ids, is_private_routable
     
         
 def key_alias_name(cluster_name):
