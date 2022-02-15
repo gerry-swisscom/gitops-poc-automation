@@ -427,7 +427,7 @@ def ensure_alb_controller_policy(ctx):
 @click.option('--user_arn', default='arn:aws:iam::259363168031:user/tgdkige1', prompt='enter user arn')
 @click.option('--user_name', default='tgdkige1', prompt='enter user name')
 @pass_ctx
-def grant_browse_permissions(ctx, user_arn, user_name):
+def X_grant_browse_permissions(ctx, user_arn, user_name):
     
     create_folder(ctx.permissions_dir)
     cmd = f"kubectl get configmap aws-auth -n kube-system -o yaml > {ctx.path_to_aws_auth_yaml}"
@@ -450,7 +450,7 @@ def grant_browse_permissions(ctx, user_arn, user_name):
     
 @cli.command()
 @pass_ctx
-def deprecated_configure_alb_controller(ctx):
+def X_install_alb_controller(ctx):
     click.echo("check if OIDC identity provider is configured for the cluster")
     oidc_provider_url = exec_command(f"aws eks describe-cluster --name {ctx.cluster_name} --query \"cluster.identity.oidc.issuer\" --output text")
     click.echo(f"- OIDC provider url: {oidc_provider_url}")
@@ -602,7 +602,7 @@ def do_query_oidc_provider():
 
 @cli.command()
 @pass_ctx
-def current(ctx):
+def X_current(ctx):
     click.echo(f"current context is {ctx.cluster_name}")
     
 
@@ -615,14 +615,14 @@ cluster_config = {
 @cli.command()
 @pass_ctx
 @click.option("--cluster", prompt="environment (dev, test, prod)")
-def switch_cluster(ctx, cluster):
+def X_switch_cluster(ctx, cluster):
     cmd = f"kubectl config use-context {cluster_config[cluster]}"
     exec_command(cmd)
     
     
 @cli.command()
 @pass_ctx
-def current_cluster(ctx):
+def X_current_cluster(ctx):
     found_cluster = exec_command("kubectl config current-context")
     for env, cluster in cluster_config.items():
         if cluster == found_cluster:
@@ -630,19 +630,5 @@ def current_cluster(ctx):
             return
         
     click.echo(f"unkonwn cluster found")
-    
-@cli.command()
-@pass_ctx
-def status(ctx):
-    if ctx.is_cluster_created():
-        click.echo("*****************************")
-        click.echo('1. cluster created')
-        click.echo('   config file:')
-        click.echo("*****************************")
-        
-        with open(ctx.path_to_create_cluster_yaml) as f:
-            click.echo(f.read())
-    
-    
-        
+
 
