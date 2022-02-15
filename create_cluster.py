@@ -436,100 +436,6 @@ def X_grant_browse_permissions(ctx, user_arn, user_name):
     click.echo(cmd)
     exec_command(cmd)
     
-    
-@cli.command()
-@pass_ctx
-def X_install_alb_controller(ctx):
-    click.echo("check if OIDC identity provider is configured for the cluster")
-    oidc_provider_url = exec_command(f"aws eks describe-cluster --name {ctx.cluster_name} --query \"cluster.identity.oidc.issuer\" --output text")
-    click.echo(f"- OIDC provider url: {oidc_provider_url}")
-    try:
-        iam_oidc_provider_list = exec_command(f"aws iam list-open-id-connect-providers | grep {oidc_provider_url.split('/')[-1]}", suppress_error_logs=True)
-        click.echo(f"- iam OIDC provider list: {iam_oidc_provider_list}")
-        click.echo("- OIDC identity provider is configured, nothing to do")
-    except subprocess.CalledProcessError as e:
-        if e.returncode == 1: # not found
-            click.echo("- OIDC provider not found for cluster\n- creating one...")
-            exec_command(f"eksctl utils associate-iam-oidc-provider --cluster {ctx.cluster_name} --approve")
-        else:
-            raise e
-    
-    policy_name = "AWSLoadBalancerControllerIAMPolicy"
-    click.echo("configure AWS loadbalancer controller")
-    create_folder(ctx.alb_controller_dir)
-    iam_policy_json = os.path.join(ctx.alb_controller_dir, "iam_policy.json")
-    cmd = f"curl -o {iam_policy_json} https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.3.0/docs/install/iam_policy.json"
-    #there was some additional permissions needed?
-    #policy exists already
-    #exec_command(cmd)
-    
-    cmd = f"aws iam create-policy --policy-name {policy_name} --policy-document file://{iam_policy_json}"
-    #there was some additional permissions needed?
-    #policy exists already
-    #exec_command(cmd)
-    
-    click.echo("create IAM service account")
-    cmd = f"""eksctl create iamserviceaccount \
-  --cluster={ctx.cluster_name} \
-  --namespace=kube-system \
-  --name=aws-load-balancer-controller \
-  --attach-policy-arn=arn:aws:iam::{ctx.account_id}:policy/{policy_name} \
-  --override-existing-serviceaccounts \
-  --approve"""
-    exec_command(cmd)
-    
-    try:
-        exec_command("kubectl get deployment -n kube-system alb-ingress-controller", suppress_error_logs=True)
-        click.echo("old controller found, remove it first")
-        exec_command("kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.8/docs/examples/alb-ingress-controller.yaml")
-        exec_command("kubectl delete -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/v1.1.8/docs/examples/rbac-role.yaml")
-    except subprocess.CalledProcessError as e:
-        if e.returncode != 1: # return code 1 means not found
-            raise e
-            
-    additional_iam_policy_json = os.path.join(ctx.alb_controller_dir, "iam_policy_v1_to_v2_additional.json")
-    #policy exists already
-    #exec_command(f"curl -o {additional_iam_policy_json} https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.3.0/docs/install/iam_policy_v1_to_v2_additional.json")
-    cmd = f"""aws iam create-policy \
-  --policy-name AWSLoadBalancerControllerAdditionalIAMPolicy \
-  --policy-document file://{additional_iam_policy_json}"""
-    #exec_command(cmd)
-    
-    cloudformation = boto3.resource('cloudformation')
-    stack = cloudformation.Stack(f"eksctl-{ctx.cluster_name}-addon-iamserviceaccount-kube-system-aws-load-balancer-controller")
-    iam_sa_role_name = list(stack.resource_summaries.all())[0].physical_resource_id
-    click.echo(f"role name of iam service account: {iam_sa_role_name}")
-    
-    click.echo("attach role to policy")
-    cmd = f"""aws iam attach-role-policy \
-  --role-name {iam_sa_role_name} \
-  --policy-arn arn:aws:iam::{ctx.account_id}:policy/AWSLoadBalancerControllerAdditionalIAMPolicy"""
-    exec_command(cmd)
-    
-    click.echo("install cert manager")
-    cmd = """kubectl apply \
-    --validate=false \
-    -f https://github.com/jetstack/cert-manager/releases/download/v1.5.4/cert-manager.yaml"""
-    exec_command(cmd)
-    
-    #TODO: check if cert manager was installed successfully
-    # exec command and assume answer below $ cmctl check api
-    #The cert-manager API is ready
-    
-    click.echo("install controller")
-    alb_ctrl_json = os.path.join(ctx.alb_controller_dir, "v2_3_0_full.yaml")
-    cmd = f"curl -Lo {alb_ctrl_json} https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases/download/v2.3.0/v2_3_0_full.yaml"
-    exec_command(cmd)
-    
-    with open(alb_ctrl_json) as f:
-        content = f.read()
-        
-    with open(alb_ctrl_json, 'w') as f:
-        content = content.replace("your-cluster-name", ctx.cluster_name)
-        f.write(content)
-        
-    cmd = f"kubectl apply -f {alb_ctrl_json}"
-    exec_command(cmd)
 
 
 @cli.command()
@@ -591,35 +497,6 @@ def do_query_oidc_provider():
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
 
-@cli.command()
-@pass_ctx
-def X_current(ctx):
-    click.echo(f"current context is {ctx.cluster_name}")
-    
 
-cluster_config = {
-    "dev":  "i-053c02913aa8a8eee@gitops-poc-dev.eu-central-1.eksctl.io",
-    "test": "i-053c02913aa8a8eee@gitops-poc-test.eu-central-1.eksctl.io",
-    "prod": "i-053c02913aa8a8eee@gitops-poc-prod.eu-central-1.eksctl.io"
-}
-
-@cli.command()
-@pass_ctx
-@click.option("--cluster", prompt="environment (dev, test, prod)")
-def X_switch_cluster(ctx, cluster):
-    cmd = f"kubectl config use-context {cluster_config[cluster]}"
-    exec_command(cmd)
-    
-    
-@cli.command()
-@pass_ctx
-def X_current_cluster(ctx):
-    found_cluster = exec_command("kubectl config current-context")
-    for env, cluster in cluster_config.items():
-        if cluster == found_cluster:
-            click.echo(f"current cluster context is: {env}")
-            return
-        
-    click.echo(f"unkonwn cluster found")
 
 
