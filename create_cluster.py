@@ -45,6 +45,9 @@ class Context:
         self.create_cluster_dir = os.path.join(self.home, "create_cluster")
         self.path_to_create_cluster_yaml = os.path.join(self.create_cluster_dir, "create_cluster.yaml")
         self.argocd_dir = os.path.join(self.home, "argo_cd")
+        permissions_dir = os.path.join(self.home, "permissions")
+        create_folder(permissions_dir)
+        self.path_to_aws_auth_yaml = os.path.join(permissions_dir, "aws-auth.yaml")
         
         
     def persist_initial_ctx(self, cluster_name, github_username):
@@ -451,8 +454,6 @@ def ensure_alb_controller_policy(ctx):
 @click.option('--user_name', default='tgdkige1', prompt='enter user name')
 @pass_ctx
 def X_grant_browse_permissions(ctx, user_arn, user_name):
-    
-    create_folder(ctx.permissions_dir)
     cmd = f"kubectl get configmap aws-auth -n kube-system -o yaml > {ctx.path_to_aws_auth_yaml}"
     click.echo(cmd)
     exec_command(cmd)
