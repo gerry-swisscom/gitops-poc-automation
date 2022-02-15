@@ -38,91 +38,73 @@ def echo_comment(msg):
 class Context:
     def __init__(self, home):
         self.home = home
-        self.config = {}
+        #self.config = {}
         self._createHomeIfMissing()
-        self.verbose = False
-        self.account_id = None
+        self.initial_ctx_yaml = os.path.join(self.home, "initial_ctx.yaml")
+        self.account_id = boto3.client('sts').get_caller_identity().get('Account')
         self.create_cluster_dir = os.path.join(self.home, "create_cluster")
         self.path_to_create_cluster_yaml = os.path.join(self.create_cluster_dir, "create_cluster.yaml")
-        self.path_to_secrets_dir = os.path.join(self.home, "secrets")
-        self.path_to_sercret_file = os.path.join(self.path_to_secrets_dir, "git_source_apps_secret.yaml")
-        self.gitsource_apps_secret_name = "git-source-apps"
-        self.init_git_reponame_and_url()
-        self.permissions_dir = os.path.join(self.home, "permissions")
-        self.path_to_aws_auth_yaml = os.path.join(self.permissions_dir, "aws-auth.yaml")
-        self.alb_controller_dir = os.path.join(self.home, "alb_controller")
         self.argocd_dir = os.path.join(self.home, "argo_cd")
-        #self.assert_in_env_folder()
-        
-    def assert_in_env_folder(self):
-        env_dir = "/home/ec2-user/environment/envs"
-        envs = [f"{os.path.join(env_dir, name)}" for name in os.listdir(env_dir) if os.path.isdir(os.path.join(env_dir, name))] 
-        if "/".join(self.home.split("/")[:-1]) not in envs:
-            click.echo(f"home dir: {self.home}")
-            raise Exception(f"illegal home, you must be in an env dir located here: {env_dir}")
         
         
-    def init_git_reponame_and_url(self):
-        if self.is_cluster_created():
-            with open(self.path_to_create_cluster_yaml) as f:
-                config = yaml.full_load(f)
-                self.cluster_name = config['metadata']['name']
-                
-            #current_context = exec_command("kubectl config current-context")
-            #found_cluster_name = current_context.split("@")[1].split(".")[0]
-            #if found_cluster_name != self.cluster_name:
-            #    raise Exception(f"current context doesn't match cluster_name ({current_context}, {self.cluster_name})")
-                
+    def persist_initial_ctx(self, cluster_name, github_username):
+        if os.path.isfile(self.initial_ctx_yaml):
+            raise Exception("initial_ctx.yaml found, bootstrap did already occure")
             
+        init_ctx = {"cluster_name": cluster_name, "github_username": github_username}
+        with open(self.initial_ctx_yaml, 'wt') as f:
+            yaml.dump(init_ctx, f)
+          
+            
+    def ensure_initial_ctx(self):
+        if not os.path.isfile(self.initial_ctx_yaml): 
+            raise Exception("initial context missing, please bootstrap first")
+        with open(self.initial_ctx_yaml) as f:
+            init_ctx = yaml.full_load(f.read())
+            
+            self.cluster_name = init_ctx["cluster_name"]
+            self.github_username = init_ctx["github_username"]
+            self.https_repo_url = f"https://github.com/{self.github_username}/{self.cluster_name}.git"
+            self.ssh_repo_url = f"git@github.com:{self.github_username}/{self.cluster_name}.git"
+            
+        echo_comment(f"initial context: {self}")
+                
 
     def _createHomeIfMissing(self):
         create_folder(self.home)
         
-        
     def is_cluster_created(self):
         return os.path.isfile(self.path_to_create_cluster_yaml)
-        
-
-    def set_config(self, key, value):
-        self.config[key] = value
-        if self.verbose:
-            echo_comment(f"config[{key}] = {value}")
 
     def __repr__(self):
-        return f"<Context {self.home}>"
+        return f"<Context home={self.home}, cluster_name={self.cluster_name}, github_username={self.github_username}>"
+ 
         
 pass_ctx = click.make_pass_decorator(Context)
 
 
-@click.group(chain=True)
-@click.option(
-    "--ctx_home",
-    envvar="CTX_HOME",
-    default=".ctx",
-    help="Changes the context folder location.",
-)
-@click.option("--verbose", "-v", is_flag=True, help="Enables verbose mode.")
+@click.group()
+@click.option("--ctx_home", envvar="CTX_HOME", default=".ctx", help="Changes the context folder location.")
 @click.version_option("1.0")
 @click.pass_context
-def cli(ctx, ctx_home, verbose):
+def cli(ctx, ctx_home):
     ctx.obj = Context(os.path.abspath(ctx_home))
-    ctx.obj.verbose = verbose
-    account_id = boto3.client('sts').get_caller_identity().get('Account')
-    ctx.obj.account_id = account_id
-    
-    
+    if ctx.invoked_subcommand != "bootstrap":
+        ctx.obj.ensure_initial_ctx()
+        
 
-cluster_name = "test-create-cluster"
-github_username = "gerry-swisscom"
-https_repo_url = f"https://github.com/{github_username}/{cluster_name}.git"
-ssh_repo_url = f"git@github.com:{github_username}/{cluster_name}.git"
-
+@cli.command()
+@click.option("--cluster_name", prompt="enter cluster name", default=cluster_name)
+@click.option("--github_username", prompt="enter github username", default=github_username)
+@pass_ctx
+def bootstrap(ctx, cluster_name, github_username):
+    ctx.persist_initial_ctx(cluster_name, github_username)
+    
 
 @cli.command()
 @pass_ctx
-@click.option("--cluster_name", prompt="enter cluster name", default=cluster_name)
-@click.option("--github_username", prompt="enter github username", default=github_username)
-def bootstrap_cluster(ctx, cluster_name, github_username):
+def bootstrap_cluster(ctx):
+    cluster_name = ctx.cluster_name
     ensure_encryption_key(cluster_name)
     key_arn = exec_command(f"aws kms describe-key --key-id {key_alias_name(cluster_name)} --query KeyMetadata.Arn --output text")
     echo_comment(f'key arn: {key_arn}')
@@ -206,13 +188,13 @@ def ensure_encryption_key(cluster_name):
 @cli.command()
 @pass_ctx
 def install_crossplane(ctx):   
-    #exec_command(f"git clone {ssh_repo_url}")
+    #exec_command(f"git clone {ctx.ssh_repo_url}")
     exec_command("kubectl create namespace crossplane-system")
     install_helm_app("crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.2")
     
     
 def install_helm_app(name, target_namespace, chart, release_name, repo_url, target_revision, path_to_app="clusters/infra", params=None, sync_wave=None, auto_commit=True):
-    
+    cluster_name = ctx.cluster_name
     fn = Path(__file__).parent / 'res' / 'argocd' / 'templates' / 'helm-app-template.yaml'
     with open(fn) as f:
         data = f.read()
@@ -239,6 +221,7 @@ def install_helm_app(name, target_namespace, chart, release_name, repo_url, targ
     
     
 def install_argo_app(name, target_namespace, repo_url, path, path_to_app="clusters/infra", sync_wave=None):
+    cluster_name = ctx.cluster_name
     fn = Path(__file__).parent / 'res' / 'argocd' / 'templates' / 'app-template.yaml'
     with open(fn) as f:
         data = f.read()
@@ -271,12 +254,15 @@ def add_sync_wave_annotation(yaml_data, sync_wave):
     return yaml.dump(yaml_obj)
     
 def commit_and_push_env_repo_changes(message):
+    cluster_name = ctx.cluster_name
     exec_command(f'cd {cluster_name} && git add . && git commit -m "{message}" && git push')
     
 
 @cli.command()
 @pass_ctx
 def configure_sa_and_aws_provider(ctx):
+    https_repo_url = ctx.https_repo_url
+    cluster_name = ctx.cluster_name
     role_name = f"crossplane_provider_aws_{cluster_name}"
     ensure_role_for_crossplane_provider(ctx, role_name)
     
@@ -313,6 +299,7 @@ def configure_sa_and_aws_provider(ctx):
     commit_and_push_env_repo_changes(f"install argo app {app_name}")
     
 def ensure_role_for_crossplane_provider(ctx, role_name):
+    cluster_name = ctx.cluster_name
     oidc_provider = do_query_oidc_provider()
     
     account_id = ctx.account_id
@@ -362,6 +349,8 @@ def ensure_role_for_crossplane_provider(ctx, role_name):
 @cli.command()
 @pass_ctx
 def install_alb_controller(ctx):
+    cluster_name = ctx.cluster_name
+    https_repo_url = ctx.https_repo_url
     policy_name, policy_arn = ensure_alb_controller_policy(ctx)
     
     app_name = "alb-controller-service-account"
@@ -545,12 +534,13 @@ def X_install_alb_controller(ctx):
 
 @cli.command()
 @pass_ctx
-@click.option("--github_username", prompt="enter github username", default=github_username)
-def install_argo(ctx, github_username):
+def install_argo(ctx):
     exec_command("kubectl create namespace argocd")
     exec_command("kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml")
     
     time.sleep(30)
+    
+    https_repo_url = ctx.https_repo_url
     
     create_folder(ctx.argocd_dir)
     cluster_cfg = os.path.join(ctx.argocd_dir, "cluster.yaml")
@@ -597,6 +587,7 @@ def oidc_provider(ctx):
 
 
 def do_query_oidc_provider():
+    cluster_name = ctx.cluster_name
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
 
