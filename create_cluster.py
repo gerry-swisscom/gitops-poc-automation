@@ -94,8 +94,8 @@ def cli(ctx, ctx_home):
         
 
 @cli.command()
-@click.option("--cluster_name", prompt="enter cluster name", default=cluster_name)
-@click.option("--github_username", prompt="enter github username", default=github_username)
+@click.option("--cluster_name", prompt="enter cluster name")
+@click.option("--github_username", prompt="enter github username")
 @pass_ctx
 def bootstrap(ctx, cluster_name, github_username):
     ctx.persist_initial_ctx(cluster_name, github_username)
