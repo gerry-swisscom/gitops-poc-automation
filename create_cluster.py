@@ -139,8 +139,8 @@ def enrich_subnets(ctx, yaml_str):
         private_subnets = dict(routable_items + non_routable_items)
         yaml_obj["vpc"]["subnets"]["private"] = private_subnets
     else:
-        yaml_obj["vpc"]["subnets"]["public"] = routable_items
-        yaml_obj["vpc"]["subnets"]["private"] = non_routable_items
+        yaml_obj["vpc"]["subnets"]["public"] = dict(routable_items)
+        yaml_obj["vpc"]["subnets"]["private"] = dict(non_routable_items)
         
     yaml_obj["nodeGroups"][0]["subnets"] = non_routable
     
@@ -193,7 +193,7 @@ def ensure_encryption_key(cluster_name):
     kms_client = boto3.client('kms')
     account_id = boto3.client('sts').get_caller_identity().get('Account')
     
-    key_arn = f"arn:aws:kms:eu-central-1:{account_id}:alias/{key_alias_name(cluster_name)}"
+    key_arn = f"arn:aws:kms:eu-central-1:{account_id}:{key_alias_name(cluster_name)}"
 
     try:
         kms_client.describe_key(KeyId=key_arn)
