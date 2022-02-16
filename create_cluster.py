@@ -71,6 +71,10 @@ class Context:
             self.https_repo_url = f"https://github.com/{self.github_username}/{self.cluster_name}.git"
             self.ssh_repo_url = f"git@github.com:{self.github_username}/{self.cluster_name}.git"
             
+            current_k8s_ctx = exec_command("kubectl config current-context")
+            if self.cluster_name not in current_k8s_ctx:
+                raise Exception("Panic: kubectl config current-context answers another cluster than the one in the initial context")
+            
         echo_comment(f"initial context: {self}")
                 
 
@@ -539,6 +543,9 @@ def do_query_oidc_provider(ctx):
     cluster_name = ctx.cluster_name
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
+    
+
+    
     
 
 
