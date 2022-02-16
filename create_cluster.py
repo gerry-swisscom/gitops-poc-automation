@@ -337,7 +337,7 @@ def configure_sa_and_aws_provider(ctx):
     
 def ensure_role_for_crossplane_provider(ctx, role_name):
     cluster_name = ctx.cluster_name
-    oidc_provider = do_query_oidc_provider()
+    oidc_provider = do_query_oidc_provider(ctx)
     
     account_id = ctx.account_id
     crossplance_ns = "crossplane-system"
@@ -399,7 +399,7 @@ def install_alb_controller(ctx):
         
     data = data.replace("<account-id>", ctx.account_id)
     data = data.replace("<role-name>", f"AmazonEKSLoadBalancerControllerRole-{cluster_name}".lower())
-    data = data.replace("<oidc-provider>", do_query_oidc_provider())
+    data = data.replace("<oidc-provider>", do_query_oidc_provider(ctx))
     data = data.replace("<policy-arn>", policy_arn)
     
     
@@ -504,7 +504,7 @@ def install_argo(ctx):
     
     # https://argo-cd.readthedocs.io/en/stable/operator-manual/health/#argocd-app
     cm_patch_yaml = Path(__file__).parent / 'res' / 'argocd' / 'cm-synch-waves-patch.yaml'
-    exec_comand(f"kubectl apply -f {cm_patch_yaml}")
+    exec_command(f"kubectl apply -f {cm_patch_yaml}")
     
     
 def load_template_and_replace_placeholder(src, dest, placeholder_dict):
@@ -524,10 +524,10 @@ def base64_encode(a_string):
 @cli.command()
 @pass_ctx
 def oidc_provider(ctx):
-    do_query_oidc_provider()
+    do_query_oidc_provider(ctx)
 
 
-def do_query_oidc_provider():
+def do_query_oidc_provider(ctx):
     cluster_name = ctx.cluster_name
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
