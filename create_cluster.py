@@ -6,6 +6,7 @@ import subprocess
 from contextlib import contextmanager
 import yaml
 import boto3
+import botocore
 import click
 import time
 import base64
@@ -198,28 +199,30 @@ def ensure_encryption_key(cluster_name):
     try:
         kms_client.describe_key(KeyId=key_arn)
         echo_comment("key found, nothing to do ...")
-    except kms_client.meta.client.exceptions.NotFoundException as ex:
-        echo_comment("create encryption key for EKS")
-        response = kms_client.create_key(
-            Description=f'key for secrets encryption in eks cluster {cluster_name}',
-            KeyUsage='ENCRYPT_DECRYPT',
-            KeySpec='SYMMETRIC_DEFAULT',
-            Origin='AWS_KMS',
-            BypassPolicyLockoutSafetyCheck=False,
-            Tags=[
-                {
-                    'TagKey': 'EKS cluster',
-                    'TagValue': cluster_name
-                },
-            ],
-            MultiRegion=False
-        )
-        arn = response['KeyMetadata']['KeyId']
-    
-        kms_client.create_alias(
-            AliasName=key_alias_name(cluster_name),
-            TargetKeyId=arn
-        )
+    # Catching exceptions through ClientError and parsing for error codes is still the best way to catch all service-side exceptions and errors.
+    except botocore.exceptions.ClientError as error:
+        if error.response['Error']['Code'] == 'NotFoundException':
+            echo_comment("create encryption key for EKS")
+            response = kms_client.create_key(
+                Description=f'key for secrets encryption in eks cluster {cluster_name}',
+                KeyUsage='ENCRYPT_DECRYPT',
+                KeySpec='SYMMETRIC_DEFAULT',
+                Origin='AWS_KMS',
+                BypassPolicyLockoutSafetyCheck=False,
+                Tags=[
+                    {
+                        'TagKey': 'EKS cluster',
+                        'TagValue': cluster_name
+                    },
+                ],
+                MultiRegion=False
+            )
+            arn = response['KeyMetadata']['KeyId']
+        
+            kms_client.create_alias(
+                AliasName=key_alias_name(cluster_name),
+                TargetKeyId=arn
+            )
     
 
 @cli.command()
@@ -365,23 +368,26 @@ def ensure_role_for_crossplane_provider(ctx, role_name):
         role.load()
         echo_comment(f"found {role.arn}")
         echo_comment("nothing to do")
-    except iam.meta.client.exceptions.NoSuchEntityException as ex:
-        echo_comment("create role for service account")
-        echo_comment(f"create role with trust relationship: {trust_relationship}")
-        role = iam.create_role(
-            RoleName=role_name,
-            AssumeRolePolicyDocument=trust_relationship,
-            Description="IAM role for provider-aws",
-            Tags=[
-                {
-                    'Key': 'cluster',
-                    'Value': cluster_name
-                },
-            ]
-        )
-        role.attach_policy(
-            PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
-        )
+    # Catching exceptions through ClientError and parsing for error codes is still the best way to catch all service-side exceptions and errors.
+    except botocore.exceptions.ClientError as error:
+        if error.response['Error']['Code'] == 'NoSuchEntity':
+            echo_comment("create role for service account")
+            echo_comment(f"create role with trust relationship: {trust_relationship}")
+            role = iam.create_role(
+                RoleName=role_name,
+                AssumeRolePolicyDocument=trust_relationship,
+                Description="IAM role for provider-aws",
+                Tags=[
+                    {
+                        'Key': 'cluster',
+                        'Value': cluster_name
+                    },
+                ]
+            )
+            role.attach_policy(
+                PolicyArn="arn:aws:iam::aws:policy/AdministratorAccess"
+            )
+            
 
 @cli.command()
 @pass_ctx
@@ -432,17 +438,19 @@ def ensure_alb_controller_policy(ctx):
     try:
         policy.load()
         echo_comment("policy found, nothing to do ...")
-    except iam.meta.client.exceptions.NoSuchEntityException as ex:
-        echo_comment("create policy for alb controller service account role")
-        fn = Path(__file__).parent / 'res' / 'alb_controller' / 'iam_policy_v1_to_v2_additional.json'
-        with open(fn) as f:
-            policy_spec = f.read()
-        policy = iam.create_policy(
-            PolicyName=policy_name,
-            PolicyDocument=policy_spec,
-            Description='policy for alb controller service account role'
-        )
-        echo_comment(f"created policy with arn: {policy.arn}")
+    # Catching exceptions through ClientError and parsing for error codes is still the best way to catch all service-side exceptions and errors.
+    except botocore.exceptions.ClientError as error:
+        if error.response['Error']['Code'] == 'NoSuchEntity':
+            echo_comment("create policy for alb controller service account role")
+            fn = Path(__file__).parent / 'res' / 'alb_controller' / 'iam_policy_v1_to_v2_additional.json'
+            with open(fn) as f:
+                policy_spec = f.read()
+            policy = iam.create_policy(
+                PolicyName=policy_name,
+                PolicyDocument=policy_spec,
+                Description='policy for alb controller service account role'
+            )
+            echo_comment(f"created policy with arn: {policy.arn}")
         
     return (policy_name, policy_arn)
     
@@ -531,7 +539,7 @@ def do_query_oidc_provider(ctx):
     cluster_name = ctx.cluster_name
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
-
+    
 
 
 
