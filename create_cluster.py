@@ -240,9 +240,18 @@ def ensure_encryption_key(cluster_name):
 @cli.command()
 @pass_ctx
 def install_crossplane(ctx):   
-    #exec_command(f"git clone {ctx.ssh_repo_url}")
+    ensure_env_repo(ctx)
     exec_command("kubectl create namespace crossplane-system")
     install_helm_app(ctx, "crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.2")
+    
+    
+def ensure_env_repo(ctx):
+    cluster_name = ctx.cluster_name
+    if cluster_name not in os.listdir('.'):
+        exec_command(f"git clone {ctx.ssh_repo_url}")
+    
+    install_argo_app(ctx, "infra", "argocd", ctx.https_repo_url, "clusters")
+    create_folder(os.path.join(cluster_name, "clusters", "infra"))
     
     
 def install_helm_app(ctx, name, target_namespace, chart, release_name, repo_url, target_revision, path_to_app="clusters/infra", params=None, sync_wave=None, auto_commit=True):
