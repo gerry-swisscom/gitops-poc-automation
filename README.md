@@ -40,7 +40,12 @@ This command installs the ArgoCD operator using the appropriate Helm chart, as w
 
 ### install-crossplane
 This command installs the crossplane Helm chart chart using the GitOps flow. 
-> Due to the limitations in the profile B account, the script doesn't force the sync of this app. You need to to this manually!
+> Due to the limitations in the profile B account, the script doesn't force the sync of this app. You need to perform this sync manually.
+> * install argo cli tool: <code>https://argo-cd.readthedocs.io/en/stable/cli_installation/</code>
+> * enable port forwarding: <code>kubectl port-forward svc/argocd-server -n argocd 8080:443</code>
+> * get temporary password: <code>kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo</code>
+> * login if necessary: <code>argocd login localhost:8080</code>
+> * force sync: <code>argocd app get infra --hard-refresh</code>
 
 ### configure-sa-and-aws-provider
 This command creates the necessary AWS role with bound to the OIDC broker of the cluster and provider-aws service account, and installs the provider-aws package and config (with the injected identity). It also commits the manifest in the env repo.
