@@ -71,11 +71,15 @@ class Context:
             self.https_repo_url = f"https://github.com/{self.github_username}/{self.cluster_name}.git"
             self.ssh_repo_url = f"git@github.com:{self.github_username}/{self.cluster_name}.git"
             
-            current_k8s_ctx = exec_command("kubectl config current-context")
-            if self.cluster_name not in current_k8s_ctx:
-                raise Exception("Panic: kubectl config current-context answers another cluster than the one in the initial context")
-            
         echo_comment(f"initial context: {self}")
+        
+                
+    def ensure_current_ctx_matches(self):
+        current_k8s_ctx = exec_command("kubectl config current-context")
+        if self.cluster_name not in current_k8s_ctx:
+            raise Exception("Panic: kubectl config current-context answers another cluster than the one in the initial context")
+            
+        
                 
 
     def _createHomeIfMissing(self):
@@ -97,8 +101,12 @@ pass_ctx = click.make_pass_decorator(Context)
 @click.pass_context
 def cli(ctx, ctx_home):
     ctx.obj = Context(os.path.abspath(ctx_home))
+    echo_comment(ctx.invoked_subcommand)
     if ctx.invoked_subcommand != "bootstrap":
         ctx.obj.ensure_initial_ctx()
+        
+    if ctx.invoked_subcommand not in ["bootstrap", "bootstrap-cluster"]:
+        ctx.obj.ensure_current_ctx_matches()
         
 
 @cli.command()
