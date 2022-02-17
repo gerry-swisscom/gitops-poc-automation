@@ -11,6 +11,8 @@ Use the build.sh script to install an executable which points to the <code>creat
 * Set up SSH keys for the Git client on the Cloud9 machine
 * Create a personal access token for accessing the env repo and store the token in an environment variable called <code>GITHUB_TOKEN</code>
 
+> Important: don't use the same workspace (folder) for different clusters
+
 ## Commands
 By calling the executable with <code>--help</code> flag you get the approriate documentation (all commands and options of the base command, option of the asked command)
 
