@@ -560,10 +560,3 @@ def do_query_oidc_provider(ctx):
     cluster_name = ctx.cluster_name
     click.echo(f"current context is {cluster_name}")
     return exec_command(f'aws eks describe-cluster --name {cluster_name} --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///"').strip()
-    
-
-    
-    
-
-
-
