@@ -451,7 +451,7 @@ def install_alb_controller(ctx):
     
 
 def ensure_alb_controller_policy(ctx):
-    policy_name = "AWSLoadBalancerControllerAdditionalIAMPolicy"
+    policy_name = "AWSLoadBalancerControllerIAMPolicy"
     account_id = ctx.account_id
     policy_arn = f"arn:aws:iam::{account_id}:policy/{policy_name}"
     iam = boto3.resource('iam')
@@ -463,7 +463,7 @@ def ensure_alb_controller_policy(ctx):
     except botocore.exceptions.ClientError as error:
         if error.response['Error']['Code'] == 'NoSuchEntity':
             echo_comment("create policy for alb controller service account role")
-            fn = Path(__file__).parent / 'res' / 'alb_controller' / 'iam_policy_v1_to_v2_additional.json'
+            fn = Path(__file__).parent / 'res' / 'alb_controller' / 'iam_policy.json'
             with open(fn) as f:
                 policy_spec = f.read()
             policy = iam.create_policy(
