@@ -20,11 +20,6 @@ nodeGroups:
     labels: { role: workers }
     instanceType: m5.large
     desiredCapacity: 3
-    privateNetworking: true
-    subnets:
-      - <non-routable-0>
-      - <non-routable-1>
-      - <non-routable-2>
     volumeSize: 80
     iam:
       withAddonPolicies:
