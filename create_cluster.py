@@ -10,6 +10,7 @@ import botocore
 import click
 import time
 import base64
+from datetime import datetime
 
 def create_folder(folder_path, raise_ex_if_present=False):
     Path(folder_path).mkdir(parents=True, exist_ok=not raise_ex_if_present)
@@ -120,6 +121,9 @@ def bootstrap(ctx, cluster_name, github_username):
 @cli.command()
 @pass_ctx
 def bootstrap_cluster(ctx):
+    now = datetime.now()
+    echo_comment(f'STARTING AT {now}')
+    
     cluster_name = ctx.cluster_name
     ensure_encryption_key(cluster_name)
     key_arn = exec_command(f"aws kms describe-key --key-id {key_alias_name(cluster_name)} --query KeyMetadata.Arn --output text")
@@ -155,7 +159,7 @@ def enrich_subnets(ctx, yaml_str):
         yaml_obj["vpc"]["subnets"]["public"] = dict(routable_items)
         yaml_obj["vpc"]["subnets"]["private"] = dict(non_routable_items)
         
-    yaml_obj["nodeGroups"][0]["subnets"] = non_routable
+    # yaml_obj["nodeGroups"][0]["subnets"] = non_routable
     
     return yaml.dump(yaml_obj)
         
