@@ -246,7 +246,7 @@ def ensure_encryption_key(cluster_name):
 def install_crossplane(ctx):   
     ensure_env_repo(ctx)
     exec_command("kubectl create namespace crossplane-system")
-    install_helm_app(ctx, "crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.2")
+    install_helm_app(ctx, "crossplane", "crossplane-system", "crossplane", "crossplane", "https://charts.crossplane.io/stable", "1.6.4")
     
     
 def ensure_env_repo(ctx):
